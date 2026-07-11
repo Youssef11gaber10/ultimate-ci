@@ -46,9 +46,9 @@ jobs:
         run: |
               ssh -i ~/.ssh/ec2-private-key -o StrictHostKeyChecking=accept-new $DEPLOY_USER@$DEPLOY_PROD_HOST "docker --version && aws --version"
               ssh -i ~/.ssh/ec2-private-key -o StrictHostKeyChecking=accept-new $DEPLOY_USER@$DEPLOY_PROD_HOST "aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin $ECR_REGISTRY"
-              ssh -i ~/.ssh/ec2-private-key -o StrictHostKeyChecking=accept-new $DEPLOY_USER@$DEPLOY_PROD_HOST "docker pull $ECR_REGISTRY/$IMAGE_NAME:latest"
+              ssh -i ~/.ssh/ec2-private-key -o StrictHostKeyChecking=accept-new $DEPLOY_USER@$DEPLOY_PROD_HOST "docker pull $ECR_REGISTRY/$DOCKER_IMAGE:latest"
               ssh -i ~/.ssh/ec2-private-key -o StrictHostKeyChecking=accept-new $DEPLOY_USER@$DEPLOY_PROD_HOST "docker rm -f $CONTAINER_NAME || true"
-              ssh -i ~/.ssh/ec2-private-key -o StrictHostKeyChecking=accept-new $DEPLOY_USER@$DEPLOY_PROD_HOST "docker run -d --name $CONTAINER_NAME -p $APP_PORT:$APP_PORT $ECR_REGISTRY/$IMAGE_NAME:latest"
+              ssh -i ~/.ssh/ec2-private-key -o StrictHostKeyChecking=accept-new $DEPLOY_USER@$DEPLOY_PROD_HOST "docker run -d --name $CONTAINER_NAME -p $APP_PORT:$APP_PORT $ECR_REGISTRY/$DOCKER_IMAGE:latest"
 
 
 
