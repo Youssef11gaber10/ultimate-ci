@@ -81,7 +81,7 @@ jobs:
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: "image"
-          scan-ref: "task-img"
+          scan-ref: "${DOCKER_IMAGE}"
           format: "table"
 
 
