@@ -1,4 +1,4 @@
-name: workflow-cd-prod
+name: workflow-cd-dev
 
 env:
   DOCKER_IMAGE: "task-img-github-action"
