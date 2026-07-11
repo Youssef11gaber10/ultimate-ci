@@ -4,7 +4,7 @@ env:
   DOCKER_IMAGE: "task-img-github-action"
   CONTAINER_NAME: github-action-container
   APP_PORT: "8000"
-  DEPLOY_PROD_HOST: ${{ secrets.DEPLOY_DEV_HOST }}
+  DEPLOY_DEV_HOST: ${{ secrets.DEPLOY_DEV_HOST }}
   DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
   DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
   ECR_REGISTRY: "767196576807.dkr.ecr.eu-north-1.amazonaws.com"
