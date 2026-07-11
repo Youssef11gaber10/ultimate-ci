@@ -22,7 +22,7 @@ on:
 jobs:
 
   deploy-to-dev-cluster:
-    if : ${{ github.event.pull_request.merged == true }}
+    # if : ${{ github.event.pull_request.merged == true }}
 
     name: Deploy to remote host
 
