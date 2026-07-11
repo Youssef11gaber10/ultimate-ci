@@ -26,10 +26,7 @@ on:
 jobs:
 
   deploy-to-dev-cluster:
-    if : | 
-      ${{ github.event.pull_request.merged == true }} &&
-      ${{ github.event.workflow_run.event == 'push'}} &&
-      ${{ github.event.workflow_run.head_branch == 'dev' }} 
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'dev' }}
 
     name: Deploy to remote host
 
