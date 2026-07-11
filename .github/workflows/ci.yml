@@ -6,7 +6,7 @@ env: # at level of workflow
   PYTHON_VERSION: "3.12"
   DOCKER_IMAGE: "task-img-github-action"
   ECR_REGISTRY: "767196576807.dkr.ecr.eu-north-1.amazonaws.com"
-  
+
 
 on:
 
@@ -17,8 +17,9 @@ on:
       - "app/**"
       - "Dockerfile"
       - ".github/workflows/ci.yml"
+      
     branches:
-      - development # if i push directly to development will run the ci pipeline
+      - dev # if i push directly to development will run the ci pipeline
 
   pull_request:
     types:
