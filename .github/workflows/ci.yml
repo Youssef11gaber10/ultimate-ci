@@ -17,6 +17,7 @@ on:
       - "app/**"
       - "Dockerfile"
       - ".github/workflows/ci.yml"
+      
     branches:
       - dev # if i push directly to development will run the ci pipeline
 
