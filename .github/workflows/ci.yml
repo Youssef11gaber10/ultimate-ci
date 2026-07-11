@@ -74,7 +74,7 @@ jobs:
         run : ruff check .
 
       - name: build docker file 
-        run : docker build -t ${{.env.DOCKER_IMAGE}} .
+        run : docker build -t ${DOCKER_IMAGE} .
       
 
       - name: Scan Docker image
