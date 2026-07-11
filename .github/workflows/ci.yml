@@ -1,52 +1,45 @@
-# This is the first real CI workflow in the course.
-# It verifies a change by running tests on a fresh runner.
-name: ci activities #name of the workflow
+
+name: ci-workflow #name of the workflow
 
 
-env:
-  CONTAINER_NAME: my-task-container
-  APP_PORT: "8000"
-  EC2_HOST: 13.53.144.66
+env: # at level of workflow
   PYTHON_VERSION: "3.12"
+  DOCKER_IMAGE: "task-img-github-action"
+  ECR_REGISTRY: "767196576807.dkr.ecr.eu-north-1.amazonaws.com"
 
 on:
-  workflow_dispatch: # or run manually
+
+  workflow_dispatch: 
+
+  push:
+    paths:
+      - "app/**"
+      - "Dockerfile"
+      - ".github/workflows/ci.yml"
+    branches:
+      - development # if i push directly to development will run the ci pipeline
 
   pull_request:
     types:
       - opened # if i open the PR will run the pipeline
       - reopened # if i reopen the PR will run the pipeline
-      - synchronize # if i push some commits on Open PR will run the pipeline 
+      - synchronize # if i push some commits on Open PR will run the ci pipeline 
     branches:
-      - main
+      - dev # if i make PR from feature branch to dev 
+      - main # if i make PR from dev to main
+
+
 
 jobs:
   ci-job:
   
-
-    # runs-on: ubuntu-latest
     runs-on: ubuntu-latest
-
-
-
 
     steps:
 
       - name: Check out repository
         uses: actions/checkout@v6
-      
-# instead of use trivy install it manually and use it you can use ready action 
-      # - name: install trivy 
-      #   run: sudo apt-get install trivy
-
-      # - name: check trivy is installed 
-      #   run: trivy --version
-
-      # - name: check fs
-      #   run: trivy fs . 
-
-      # - name: check docker file 
-      #   run: trivy config Dockerfile 
+       
 
       - name : trivy fs scan 
         uses: aquasecurity/trivy-action@master # this action like  install trivy for you on vm and you can start use it , he actuall make container have trivy run inside of it and remove it after run
@@ -62,7 +55,6 @@ jobs:
           scan-ref: "Dockerfile"
           format: "table"
       
-
 
       - name : install python to install ruff 
         uses: actions/setup-python@v6
@@ -82,10 +74,8 @@ jobs:
         run : ruff check .
 
       - name: build docker file 
-        run : docker build -t task-img .
+        run : docker build -t ${{.env.DOCKER_IMAGE}} .
       
-      # - name: Scan Docker image
-      #   run: trivy image task-img
 
       - name: Scan Docker image
         uses: aquasecurity/trivy-action@master
@@ -95,11 +85,7 @@ jobs:
           format: "table"
 
 
-      # - name: change name of image 
-      #   run : docker tag task-img task-img-artifact # this for differ between docker image in artifact and local 
-
       - name: save docker image
-        # run : docker save task-img-artifact -o task-img-artifact.tar
         run: docker save task-img -o task-img.tar
 
       - name: Upload artifact
@@ -108,14 +94,6 @@ jobs:
           name: task-img
           path: task-img.tar
 
-      # - name: remove image task-image-artifact
-      #   run: docker rm -f task-img-artifact
-      
-      # - name: Load Docker image
-      #   run: docker load -i task-img-artifact.tar
-
-      # - name: Scan loaded image
-      #   run: trivy image task-img-artifact
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -129,13 +107,12 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+
+
       - name: retag the image tob be compatible with ecr
         run: |
-          docker tag task-img:latest \
-          767196576807.dkr.ecr.eu-north-1.amazonaws.com/task-img:latest
+          docker tag ${DOCKER_IMAGE}:latest \
+            ${ECR_REGISTRY}/${DOCKER_IMAGE}:latest
 
       - name: push to our repo on ecr 
-        run : docker push  767196576807.dkr.ecr.eu-north-1.amazonaws.com/task-img:latest
-
-
- 
+        run : docker push  ${ECR_REGISTRY}/${DOCKER_IMAGE}:latest

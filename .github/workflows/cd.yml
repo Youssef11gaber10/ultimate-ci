@@ -1,0 +1,57 @@
+name: workflow-cd-prod
+
+env:
+  DOCKER_IMAGE: "task-img-github-action"
+  CONTAINER_NAME: github-action-container
+  APP_PORT: "8000"
+  DEPLOY_HOST: ${{ secrets.DEPLOY_DEV_HOST }}
+  DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+  DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+  ECR_REGISTRY: "767196576807.dkr.ecr.eu-north-1.amazonaws.com"
+
+on:
+  pull_request:
+    types:
+      - closed 
+    branches:
+      - main
+
+
+jobs:
+
+  deploy-to-dev-cluster:
+    if : ${{ github.event.pull_request.merged == true }}
+
+    name: Deploy to remote host
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name : mkdri
+        run:  mkdir -p ~/.ssh
+      - name: echo
+        run :  echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/ec2-private-key
+      - name: chmod
+        run :  sudo chmod 600 ~/.ssh/ec2-private-key
+      - name: ssh-keyscan
+        run :  ssh-keyscan -H $DEPLOY_DEV_HOST >> ~/.ssh/known_hosts
+
+ 
+
+
+      - name: deploy use ssh
+        run: |
+              ssh -i ~/.ssh/ec2-private-key -o StrictHostKeyChecking=accept-new $DEPLOY_USER@$DEPLOY_DEV_HOST "docker --version && aws --version"
+              ssh -i ~/.ssh/ec2-private-key -o StrictHostKeyChecking=accept-new $DEPLOY_USER@$DEPLOY_DEV_HOST "aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin $ECR_REGISTRY"
+              ssh -i ~/.ssh/ec2-private-key -o StrictHostKeyChecking=accept-new $DEPLOY_USER@$DEPLOY_DEV_HOST "docker pull $ECR_REGISTRY/$IMAGE_NAME:latest"
+              ssh -i ~/.ssh/ec2-private-key -o StrictHostKeyChecking=accept-new $DEPLOY_USER@$DEPLOY_DEV_HOST "docker rm -f $CONTAINER_NAME || true"
+              ssh -i ~/.ssh/ec2-private-key -o StrictHostKeyChecking=accept-new $DEPLOY_USER@$DEPLOY_DEV_HOST "docker run -d --name $CONTAINER_NAME -p $APP_PORT:$APP_PORT $ECR_REGISTRY/$IMAGE_NAME:latest"
+
+
+
+
+      - name: print health respone body
+        run: |
+          ssh -i ~/.ssh/ec2-private-key -o StrictHostKeyChecking=accept-new $DEPLOY_USER@$DEPLOY_DEV_HOST \
+          curl http://${{ secrets.DEPLOY_DEV_HOST }}:${APP_PORT}/health
