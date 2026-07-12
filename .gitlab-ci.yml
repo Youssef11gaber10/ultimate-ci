@@ -156,7 +156,7 @@ deploy-to-dev:
     - ssh -i ~/.ssh/ec2-private-key $DEPLOY_USER@$DEPLOY_DEV_HOST "aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin $ECR_REGISTRY"
     - ssh -i ~/.ssh/ec2-private-key $DEPLOY_USER@$DEPLOY_DEV_HOST "docker pull $ECR_REGISTRY/$DOCKER_IMAGE:latest"
     - ssh -i ~/.ssh/ec2-private-key $DEPLOY_USER@$DEPLOY_DEV_HOST "docker rm -f $CONTAINER_NAME || true"
-    - ssh -i ~/.ssh/ec2-private-key $DEPLOY_USER@$DEPLOY_DEV_HOST "docker run -d --name $CONTAINER_NAME -p $APP_PORT:$APP_PORT $ECR_REGISTRY/$DOCKER_IMAGE:latest"
+    - ssh -i ~/.ssh/ec2-private-key $DEPLOY_USER@$DEPLOY_DEV_HOST "docker run -d --name $CONTAINER_NAME -p $APP_PORT:$8000 $ECR_REGISTRY/$DOCKER_IMAGE:latest"
     - ssh -i ~/.ssh/ec2-private-key $DEPLOY_USER@$DEPLOY_DEV_HOST "curl -f http://localhost:$APP_PORT/health"
 
 # ---------- deploy to prod (only on merge into main, i.e. push to main) ----------
