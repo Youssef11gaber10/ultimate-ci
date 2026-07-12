@@ -77,6 +77,7 @@ pipeline {
                 sh 'trivy fs --cache-dir ${WORKSPACE}/.trivy-cache --format table .'
                 sh 'trivy config --cache-dir ${WORKSPACE}/.trivy-cache --format table Dockerfile'
             }
+            
         }
 
         stage('Build Image') {
@@ -195,14 +196,22 @@ pipeline {
                     sh '''
                         mkdir -p ~/.ssh
                         ssh-keyscan -H $DEPLOY_PROD_HOST >> ~/.ssh/known_hosts
-                        ssh -i $SSH_KEY $DEPLOY_USER@$DEPLOY_PROD_HOST "aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin $ECR_REGISTRY"
-                        ssh -i $SSH_KEY $DEPLOY_USER@$DEPLOY_PROD_HOST "docker pull $ECR_REGISTRY/$DOCKER_IMAGE:latest"
-                        ssh -i $SSH_KEY $DEPLOY_USER@$DEPLOY_PROD_HOST "docker rm -f $CONTAINER_NAME || true"
-                        ssh -i $SSH_KEY $DEPLOY_USER@$DEPLOY_PROD_HOST "docker run -d --name $CONTAINER_NAME -p $APP_PORT:8000 $ECR_REGISTRY/$DOCKER_IMAGE:latest"
-                        ssh -i $SSH_KEY $DEPLOY_USER@$DEPLOY_PROD_HOST "curl -f http://localhost:$APP_PORT/health"
+                        ssh -i -o StrictHostKeyChecking=accept-new $SSH_KEY $DEPLOY_USER@$DEPLOY_PROD_HOST "aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin $ECR_REGISTRY"
+                        ssh -i -o StrictHostKeyChecking=accept-new $SSH_KEY $DEPLOY_USER@$DEPLOY_PROD_HOST "docker pull $ECR_REGISTRY/$DOCKER_IMAGE:latest"
+                        ssh -i -o StrictHostKeyChecking=accept-new $SSH_KEY $DEPLOY_USER@$DEPLOY_PROD_HOST "docker rm -f $CONTAINER_NAME || true"
+                        ssh -i -o StrictHostKeyChecking=accept-new $SSH_KEY $DEPLOY_USER@$DEPLOY_PROD_HOST "docker run -d --name $CONTAINER_NAME -p $APP_PORT:8000 $ECR_REGISTRY/$DOCKER_IMAGE:latest"
+                        ssh -i \$SSH_KEY -o StrictHostKeyChecking=accept-new \$DEPLOY_USER@\$DEPLOY_PROD_HOST 'for i in \$(seq 1 10); do curl -sf http://localhost:\$APP_PORT/health && break || sleep 2; done'
+
                     '''
                 }
             }
         }
     }
+
+    post {
+        always {
+            sh 'docker image prune -af || true'
+        }
+    }
+
 }
