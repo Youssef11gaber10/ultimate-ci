@@ -1,0 +1,178 @@
+pipeline {
+    agent none
+
+    environment {
+        PYTHON_VERSION = "3.12"
+        DOCKER_IMAGE   = "task-img-jenkins-ci"
+        ECR_REGISTRY   = "767196576807.dkr.ecr.eu-north-1.amazonaws.com"
+        CONTAINER_NAME = "jenkins-ci-container"
+        APP_PORT       = "8002"
+    }
+
+    options {
+        skipDefaultCheckout(false)
+        disableConcurrentBuilds()
+    }
+
+    stages {
+
+        // ---------- CI stages: run on PR (into dev or main) OR direct push to dev ----------
+
+        stage('Lint') {
+            when {
+                anyOf {
+                    changeRequest target: 'dev'
+                    changeRequest target: 'main'
+                    allOf {
+                        branch 'dev'
+                        changeset "app/**"
+                    }
+                    allOf {
+                        branch 'dev'
+                        changeset "Dockerfile"
+                    }
+                }
+            }
+            agent { docker { image "python:${PYTHON_VERSION}" } }
+            steps {
+                sh 'python --version'
+                sh 'pip install ruff'
+                sh 'ruff --version'
+                sh 'ruff check .'
+            }
+        }
+
+        stage('Trivy FS + Config Scan') {
+            when {
+                anyOf {
+                    changeRequest target: 'dev'
+                    changeRequest target: 'main'
+                    allOf { branch 'dev'; changeset "app/**" }
+                    allOf { branch 'dev'; changeset "Dockerfile" }
+                }
+            }
+            agent {
+                docker {
+                    image 'aquasec/trivy:latest'
+                    args '--entrypoint=""'
+                }
+            }
+            steps {
+                sh 'trivy fs --format table .'
+                sh 'trivy config --format table Dockerfile'
+            }
+        }
+
+        stage('Build Image') {
+            when {
+                anyOf {
+                    changeRequest target: 'dev'
+                    changeRequest target: 'main'
+                    allOf { branch 'dev'; changeset "app/**" }
+                    allOf { branch 'dev'; changeset "Dockerfile" }
+                }
+            }
+            agent any
+            steps {
+                sh "docker build -t ${DOCKER_IMAGE} ."
+                sh "docker save ${DOCKER_IMAGE} -o image.tar"
+                stash name: 'image-tar', includes: 'image.tar'
+            }
+        }
+
+        stage('Trivy Image Scan') {
+            when {
+                anyOf {
+                    changeRequest target: 'dev'
+                    changeRequest target: 'main'
+                    allOf { branch 'dev'; changeset "app/**" }
+                    allOf { branch 'dev'; changeset "Dockerfile" }
+                }
+            }
+            agent any
+            steps {
+                unstash 'image-tar'
+                sh "docker load -i image.tar"
+                sh "trivy image ${DOCKER_IMAGE} --format table"
+            }
+        }
+
+        // ---------- Push to ECR: only on real push to dev (PR merged into dev) ----------
+
+        stage('Push to ECR') {
+            when {
+                allOf {
+                    branch 'dev'
+                    not { changeRequest() }
+                    anyOf { changeset "app/**"; changeset "Dockerfile" }
+                }
+            }
+            agent any
+            steps {
+                unstash 'image-tar'
+                sh "docker load -i image.tar"
+                withCredentials([
+                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
+                    sh '''
+                        aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin $ECR_REGISTRY
+                        docker tag $DOCKER_IMAGE:latest $ECR_REGISTRY/$DOCKER_IMAGE:latest
+                        docker push $ECR_REGISTRY/$DOCKER_IMAGE:latest
+                    '''
+                }
+            }
+        }
+
+        // ---------- Deploy to dev: same condition as push-to-ecr, this IS "PR closed+merged into dev" ----------
+
+        stage('Deploy to Dev') {
+            when {
+                allOf {
+                    branch 'dev'
+                    not { changeRequest() }
+                    anyOf { changeset "app/**"; changeset "Dockerfile" }
+                }
+            }
+            agent any
+            steps {
+                withCredentials([sshUserPrivateKey(credentialsId: 'deploy-ssh-key', keyFileVariable: 'SSH_KEY', usernameVariable: 'DEPLOY_USER')]) {
+                    sh '''
+                        mkdir -p ~/.ssh
+                        ssh-keyscan -H $DEPLOY_DEV_HOST >> ~/.ssh/known_hosts
+                        ssh -i $SSH_KEY $DEPLOY_USER@$DEPLOY_DEV_HOST "aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin $ECR_REGISTRY"
+                        ssh -i $SSH_KEY $DEPLOY_USER@$DEPLOY_DEV_HOST "docker pull $ECR_REGISTRY/$DOCKER_IMAGE:latest"
+                        ssh -i $SSH_KEY $DEPLOY_USER@$DEPLOY_DEV_HOST "docker rm -f $CONTAINER_NAME || true"
+                        ssh -i $SSH_KEY $DEPLOY_USER@$DEPLOY_DEV_HOST "docker run -d --name $CONTAINER_NAME -p $APP_PORT:8000 $ECR_REGISTRY/$DOCKER_IMAGE:latest"
+                        ssh -i $SSH_KEY $DEPLOY_USER@$DEPLOY_DEV_HOST "curl -f http://localhost:$APP_PORT/health"
+                    '''
+                }
+            }
+        }
+
+        // ---------- Deploy to prod: only on push to main (PR closed+merged into main), no rebuild ----------
+
+        stage('Deploy to Prod') {
+            when {
+                allOf {
+                    branch 'main'
+                    not { changeRequest() }
+                }
+            }
+            agent any
+            steps {
+                withCredentials([sshUserPrivateKey(credentialsId: 'deploy-ssh-key', keyFileVariable: 'SSH_KEY', usernameVariable: 'DEPLOY_USER')]) {
+                    sh '''
+                        mkdir -p ~/.ssh
+                        ssh-keyscan -H $DEPLOY_PROD_HOST >> ~/.ssh/known_hosts
+                        ssh -i $SSH_KEY $DEPLOY_USER@$DEPLOY_PROD_HOST "aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin $ECR_REGISTRY"
+                        ssh -i $SSH_KEY $DEPLOY_USER@$DEPLOY_PROD_HOST "docker pull $ECR_REGISTRY/$DOCKER_IMAGE:latest"
+                        ssh -i $SSH_KEY $DEPLOY_USER@$DEPLOY_PROD_HOST "docker rm -f $CONTAINER_NAME || true"
+                        ssh -i $SSH_KEY $DEPLOY_USER@$DEPLOY_PROD_HOST "docker run -d --name $CONTAINER_NAME -p $APP_PORT:8000 $ECR_REGISTRY/$DOCKER_IMAGE:latest"
+                        ssh -i $SSH_KEY $DEPLOY_USER@$DEPLOY_PROD_HOST "curl -f http://localhost:$APP_PORT/health"
+                    '''
+                }
+            }
+        }
+    }
+}
