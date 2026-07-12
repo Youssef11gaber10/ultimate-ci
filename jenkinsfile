@@ -171,7 +171,7 @@ pipeline {
                         ssh -i $SSH_KEY -o StrictHostKeyChecking=accept-new $DEPLOY_USER@$DEPLOY_DEV_HOST "docker pull $ECR_REGISTRY/$DOCKER_IMAGE:latest"
                         ssh -i $SSH_KEY -o StrictHostKeyChecking=accept-new $DEPLOY_USER@$DEPLOY_DEV_HOST "docker rm -f $CONTAINER_NAME || true"
                         ssh -i $SSH_KEY -o StrictHostKeyChecking=accept-new $DEPLOY_USER@$DEPLOY_DEV_HOST "docker run -d --name $CONTAINER_NAME -p $APP_PORT:8000 $ECR_REGISTRY/$DOCKER_IMAGE:latest"
-                        ssh -i $SSH_KEY -o StrictHostKeyChecking=accept-new $DEPLOY_USER@$DEPLOY_DEV_HOST "for i in \$(seq 1 10); do curl -sf http://localhost:$APP_PORT/health && break || sleep 2; done"
+                        ssh -i \$SSH_KEY -o StrictHostKeyChecking=accept-new \$DEPLOY_USER@\$DEPLOY_DEV_HOST 'for i in \$(seq 1 10); do curl -sf http://localhost:\$APP_PORT/health && break || sleep 2; done'
                     '''
                 }
             }
