@@ -1,0 +1,177 @@
+stages:
+  - lint 
+  - scan-fs
+  - build
+  - scan-image
+  - push
+  - deploy-dev
+  - deploy-prod
+
+variables:
+  PYTHON_VERSION: "3.12"
+  DOCKER_IMAGE: "task-img-gitlab-ci"
+  ECR_REGISTRY: "767196576807.dkr.ecr.eu-north-1.amazonaws.com"
+  CONTAINER_NAME: "github-lab-ci-container"
+  APP_PORT: "8000"
+
+# Prevent duplicate pipelines (branch pipeline + MR pipeline firing on the same push)
+# this like first filter this pipeline work when 
+# any PR event open/ reopened/ synchronize....etc at all branches either featuer to dev or dev to main
+# any push on dev branch either directly or after make PR from feature to dev consider as push to dev
+# any push on main branch either directly(will not be allowed) or after make PR from dev to main consider as push to main
+# any web push this like workflow dispatch on github action
+# so if any one of this actions happen this pipeline will trigger to run 
+# and later we will specify ate level of each job second phase of filtering when to run each job 
+# the ci related job run when PR open on dev or  PR open on main  or push directly to dev and changes were on some files of app or Dockerfile or .gitlab-ci.yml
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "dev"
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+
+# ---------- shared rule anchors ----------
+# instead of put this sectoin at each job of ci workflow we put it here and attach it to each job
+# its like template of job here is template of rules and make &ci_rules anchor refer to it 
+
+# run ci-jobs when 
+  # any PR event (open,reopened,synchronize) on dev or main
+  # any push on dev branch either directly or after make PR from feature to dev change on some files of app or Dockerfile or .gitlab-ci.yml
+  # any web push
+.ci_rules: &ci_rules
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev" || $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main")
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "dev"
+      changes:
+        - app/**/*
+        - Dockerfile
+        - .gitlab-ci.yml
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+# ---------- lint / scan fs ----------
+lint:
+  stage: lint
+  image: python:${PYTHON_VERSION}
+  <<: *ci_rules
+  script:
+    - python --version
+    - pip install ruff
+    - ruff --version
+    - ruff check .
+
+trivy-fs-scan:
+  stage: scan-fs
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""] # for escape the entrypoint
+  <<: *ci_rules
+  script:
+    - trivy fs --format table .
+
+trivy-dockerfile-scan:
+  stage: scan-fs
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
+  <<: *ci_rules
+  script:
+    - trivy config --format table Dockerfile
+
+# ---------- build ----------
+build-image:
+  stage: build
+  image: docker:24
+  services:
+    - docker:24-dind
+  <<: *ci_rules
+  script:
+    - docker build -t $DOCKER_IMAGE .
+    - docker save $DOCKER_IMAGE -o image.tar
+  artifacts:
+    paths:
+      - image.tar
+    expire_in: 1 hour
+
+trivy-image-scan:
+  stage: scan-image
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
+  <<: *ci_rules
+  needs: ["build-image"]
+  script:
+    - trivy image --input image.tar --format table
+
+# ---------- push to ECR (only makes sense on real push to dev, not on MR) ----------
+# all before ci jobs runs when i for example open PR from feature to dev till build image and scan image 
+# push image to ecr runs only when build image and scan image jobs success & you close PR to dev + merged==sucess -> equivelent to push to dev change in some files of app or Dockerfile or .gitlab-ci.yml
+push-to-ecr:
+  stage: push
+  image: docker:24
+  services:
+    - docker:24-dind
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "dev"
+      changes:
+        - app/**/*
+        - Dockerfile
+        - .gitlab-ci.yml
+
+  needs: ["build-image", "trivy-image-scan"] # needs when the ci jobs success make build of the image 
+  before_script:
+    - apk add --no-cache aws-cli
+    - docker load -i image.tar
+  script:
+    - aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin $ECR_REGISTRY
+    - docker tag $DOCKER_IMAGE:latest $ECR_REGISTRY/$DOCKER_IMAGE:latest
+    - docker push $ECR_REGISTRY/$DOCKER_IMAGE:latest
+
+# ---------- deploy to dev ----------
+# once push to ecr success it happens already when push to dev (PR close) so no need to check again it push at dev so just needs push to ecr run to deploy-to-dev directly
+# but we need to put rules to not be run every time when any event happen need to define run also on push to dev change in some files of app or Dockerfile or .gitlab-ci.yml
+deploy-to-dev:
+  stage: deploy-dev
+  image: alpine:latest
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "dev"
+      changes:
+        - app/**/*
+        - Dockerfile
+        - .gitlab-ci.yml
+  needs: ["push-to-ecr"]
+  before_script:
+    - apk add --no-cache openssh-client
+    - mkdir -p ~/.ssh
+    - echo "$DEPLOY_SSH_KEY" > ~/.ssh/ec2-private-key
+    - chmod 600 ~/.ssh/ec2-private-key
+    - ssh-keyscan -H "$DEPLOY_DEV_HOST" >> ~/.ssh/known_hosts
+  script:
+    - ssh -i ~/.ssh/ec2-private-key $DEPLOY_USER@$DEPLOY_DEV_HOST "docker --version && aws --version"
+    - ssh -i ~/.ssh/ec2-private-key $DEPLOY_USER@$DEPLOY_DEV_HOST "aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin $ECR_REGISTRY"
+    - ssh -i ~/.ssh/ec2-private-key $DEPLOY_USER@$DEPLOY_DEV_HOST "docker pull $ECR_REGISTRY/$DOCKER_IMAGE:latest"
+    - ssh -i ~/.ssh/ec2-private-key $DEPLOY_USER@$DEPLOY_DEV_HOST "docker rm -f $CONTAINER_NAME || true"
+    - ssh -i ~/.ssh/ec2-private-key $DEPLOY_USER@$DEPLOY_DEV_HOST "docker run -d --name $CONTAINER_NAME -p $APP_PORT:$APP_PORT $ECR_REGISTRY/$DOCKER_IMAGE:latest"
+    - ssh -i ~/.ssh/ec2-private-key $DEPLOY_USER@$DEPLOY_DEV_HOST "curl -f http://localhost:$APP_PORT/health"
+
+# ---------- deploy to prod (only on merge into main, i.e. push to main) ----------
+# here this run only when PR closed main + merged == success equivelent to push on main change in some files of app or Dockerfile or .gitlab-ci.yml
+deploy-to-prod:
+  stage: deploy-prod
+  image: alpine:latest
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
+  before_script:
+    - apk add --no-cache openssh-client
+    - mkdir -p ~/.ssh
+    - echo "$DEPLOY_SSH_KEY" > ~/.ssh/ec2-private-key
+    - chmod 600 ~/.ssh/ec2-private-key
+    - ssh-keyscan -H "$DEPLOY_PROD_HOST" >> ~/.ssh/known_hosts
+  script:
+    - ssh -i ~/.ssh/ec2-private-key $DEPLOY_USER@$DEPLOY_PROD_HOST "docker --version && aws --version"
+    - ssh -i ~/.ssh/ec2-private-key $DEPLOY_USER@$DEPLOY_PROD_HOST "aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin $ECR_REGISTRY"
+    - ssh -i ~/.ssh/ec2-private-key $DEPLOY_USER@$DEPLOY_PROD_HOST "docker pull $ECR_REGISTRY/$DOCKER_IMAGE:latest"
+    - ssh -i ~/.ssh/ec2-private-key $DEPLOY_USER@$DEPLOY_PROD_HOST "docker rm -f $CONTAINER_NAME || true"
+    - ssh -i ~/.ssh/ec2-private-key $DEPLOY_USER@$DEPLOY_PROD_HOST "docker run -d --name $CONTAINER_NAME -p $APP_PORT:$APP_PORT $ECR_REGISTRY/$DOCKER_IMAGE:latest"
+    - ssh -i ~/.ssh/ec2-private-key $DEPLOY_USER@$DEPLOY_PROD_HOST "curl -f http://localhost:$APP_PORT/health"

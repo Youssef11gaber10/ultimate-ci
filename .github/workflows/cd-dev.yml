@@ -16,17 +16,26 @@ on:
     types:
       - completed
     
-  pull_request:
-    types:
-      - closed 
-    branches:
-      - dev
+  # pull_request: # i will just ignore the PR closed from feature to dev and consider push to dev will trigger ci pipeline and later will trigger cd-dev as complete ci and push to dev 
+  #   types:
+  #     - closed 
+  #   branches:
+  #     - dev
 
 
 jobs:
 
   deploy-to-dev-cluster:
     if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'dev' }}
+
+
+  # this work for both but skip when make PR from feature to dev skip the cd-dev and the PR considered push to cd-dev run from ci complete and considred push to dev so run this 
+    # if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'dev' }}
+
+    # this will trigger twice 
+    # if: |
+    #   ${{ github.event.workflow_run.conclusion == 'success'  && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'dev' || github.event.pull_request.merged == true }}
+    
 
     name: Deploy to remote host
 
