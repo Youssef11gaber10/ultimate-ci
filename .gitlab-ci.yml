@@ -109,9 +109,9 @@ trivy-image-scan:
 # push image to ecr runs only when build image and scan image jobs success & you close PR to dev + merged==sucess -> equivelent to push to dev change in some files of app or Dockerfile or .gitlab-ci.yml
 push-to-ecr:
   stage: push
-  image: docker:24
+  image: docker:lastest
   services:
-    - docker:24-dind
+    - docker:dind
   rules:
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "dev"
       changes:
