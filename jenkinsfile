@@ -109,7 +109,15 @@ pipeline {
             steps {
                 unstash 'image-tar'
                 sh "docker load -i image.tar"
-                sh "trivy image ${DOCKER_IMAGE} --format table"
+                sh '''
+                    mkdir -p ${WORKSPACE}/.trivy-cache
+                    docker run --rm \
+                      -v /var/run/docker.sock:/var/run/docker.sock \
+                      -v ${WORKSPACE}/.trivy-cache:/tmp/.cache \
+                      -e HOME=/tmp \
+                      -e XDG_CACHE_HOME=/tmp/.cache \
+                      aquasec/trivy:latest image ${DOCKER_IMAGE} --format table
+                '''
             }
         }
 
