@@ -38,17 +38,19 @@ pipeline {
             // agent { docker { image "python:${PYTHON_VERSION}"  label "agent-1" } }
             // agent { docker { image "python:${PYTHON_VERSION}" } }
             agent {
-                        docker {
-                            image "python:${PYTHON_VERSION}"
-                            label "agent-1"
-                        }
-                    }
-
+                docker {
+                    image "python:${PYTHON_VERSION}"
+                    label "agent-1"
+                }
+            }
+            environment {
+                HOME = "${WORKSPACE}"
+            }
             steps {
                 sh 'python --version'
-                sh 'pip install ruff'
-                sh 'ruff --version'
-                sh 'ruff check .'
+                sh 'pip install --user ruff'
+                sh 'export PATH=$HOME/.local/bin:$PATH && ruff --version'
+                sh 'export PATH=$HOME/.local/bin:$PATH && ruff check .'
             }
         }
 
