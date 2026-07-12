@@ -9,16 +9,16 @@ stages:
 
 variables:
   PYTHON_VERSION: "3.12"
-  DOCKER_IMAGE: "task-img-github-action"
+  DOCKER_IMAGE: "task-img-gitlab-ci"
   ECR_REGISTRY: "767196576807.dkr.ecr.eu-north-1.amazonaws.com"
-  CONTAINER_NAME: "github-action-container"
+  CONTAINER_NAME: "github-lab-ci-container"
   APP_PORT: "8000"
 
 # Prevent duplicate pipelines (branch pipeline + MR pipeline firing on the same push)
 # this like first filter this pipeline work when 
-# any PR open/ reopened/ synchronize/closed(considered push)....etc at all branches either featuer to dev or dev to main
-# any push on dev branch 
-# any push on main branch -> PR closed to main is like  make push to main so need to include here , we protect main branch not push to it 
+# any PR event open/ reopened/ synchronize....etc at all branches either featuer to dev or dev to main
+# any push on dev branch either directly or after make PR from feature to dev consider as push to dev
+# any push on main branch either directly(will not be allowed) or after make PR from dev to main consider as push to main
 # any web push this like workflow dispatch on github action
 # so if any one of this actions happen this pipeline will trigger to run 
 # and later we will specify ate level of each job second phase of filtering when to run each job 
@@ -36,9 +36,10 @@ workflow:
 # instead of put this sectoin at each job of ci workflow we put it here and attach it to each job
 # its like template of job here is template of rules and make &ci_rules anchor refer to it 
 
-# for ci job run only when you make PR open target is dev or main -> from feature branch to dev or dev to main
-# next run run ci jobs also when i push directly to dev -> changes were on some files of app or Dockerfile or .gitlab-ci.yml
-# last run from web like workflow dispatch
+# run ci-jobs when 
+  # any PR event (open,reopened,synchronize) on dev or main
+  # any push on dev branch either directly or after make PR from feature to dev change on some files of app or Dockerfile or .gitlab-ci.yml
+  # any web push
 .ci_rules: &ci_rules
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev" || $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main")
@@ -104,11 +105,8 @@ trivy-image-scan:
     - trivy image --input image.tar --format table
 
 # ---------- push to ECR (only makes sense on real push to dev, not on MR) ----------
-# push image not happen in ci workflow each time ci trigger not 
-# here when you push on dev branch directly in some files changed  so there new code need to after build push to ecr 
-# if you make PR build and scan image but not push not each ci run with PR build image , it just build when push directly to dev or PR closed from feature to dev so consider push on dev 
-# then the image are on ecr registery  , once the image pushed to ecr we can deploy to dev (continous deployment) 
-# or deploy to prod if i make after push on dev or close PR to dev make PR to main branch this consider push to main branch so will trigger deploy to prod cluster
+# all before ci jobs runs when i for example open PR from feature to dev till build image and scan image 
+# push image to ecr runs only when build image and scan image jobs success & you close PR to dev + merged==sucess -> equivelent to push to dev change in some files of app or Dockerfile or .gitlab-ci.yml
 push-to-ecr:
   stage: push
   image: docker:24
@@ -120,6 +118,7 @@ push-to-ecr:
         - app/**/*
         - Dockerfile
         - .gitlab-ci.yml
+
   needs: ["build-image", "trivy-image-scan"] # needs when the ci jobs success make build of the image 
   before_script:
     - apk add --no-cache aws-cli
@@ -130,6 +129,8 @@ push-to-ecr:
     - docker push $ECR_REGISTRY/$DOCKER_IMAGE:latest
 
 # ---------- deploy to dev ----------
+# once push to ecr success it happens already when push to dev (PR close) so no need to check again it push at dev so just needs push to ecr run to deploy-to-dev directly
+# but we need to put rules to not be run every time when any event happen need to define run also on push to dev change in some files of app or Dockerfile or .gitlab-ci.yml
 deploy-to-dev:
   stage: deploy-dev
   image: alpine:latest
@@ -155,6 +156,7 @@ deploy-to-dev:
     - ssh -i ~/.ssh/ec2-private-key $DEPLOY_USER@$DEPLOY_DEV_HOST "curl -f http://localhost:$APP_PORT/health"
 
 # ---------- deploy to prod (only on merge into main, i.e. push to main) ----------
+# here this run only when PR closed main + merged == success equivelent to push on main change in some files of app or Dockerfile or .gitlab-ci.yml
 deploy-to-prod:
   stage: deploy-prod
   image: alpine:latest
