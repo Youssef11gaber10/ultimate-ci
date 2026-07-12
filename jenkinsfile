@@ -40,7 +40,7 @@ pipeline {
             agent {
                         docker {
                             // image "python:${PYTHON_VERSION}"
-                            image: "ghcr.io/astral-sh/ruff:latest"
+                            image "ghcr.io/astral-sh/ruff:latest"
                             label "agent-1"
                         }
                     }
