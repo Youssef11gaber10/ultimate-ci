@@ -1,5 +1,6 @@
 pipeline {
-    agent none
+    // agent none // not assign the pipeline to one agent it will run each stage  on any available agent 
+    agent { label "agent-1" }
 
     environment {
         PYTHON_VERSION = "3.12"
@@ -10,8 +11,8 @@ pipeline {
     }
 
     options {
-        skipDefaultCheckout(false)
-        disableConcurrentBuilds()
+        skipDefaultCheckout(false) // make checkout before each stage
+        disableConcurrentBuilds() // make sure only one pipeline run at a time
     }
 
     stages {
@@ -20,25 +21,36 @@ pipeline {
 
         stage('Lint') {
             when {
-                anyOf {
-                    changeRequest target: 'dev'
-                    changeRequest target: 'main'
-                    allOf {
+                anyOf { // this like or  A or b or c any of then is true will run this job
+                    changeRequest target: 'dev'  // this like PR open/reopened/synchronize on dev
+                    changeRequest target: 'main' // this like PR open on main
+                    allOf {  // all of like and this true & this true 
                         branch 'dev'
                         changeset "app/**"
                     }
-                    allOf {
+                    allOf {// change in app/** or docker file from dev is directly push or merged from feature to dev
                         branch 'dev'
                         changeset "Dockerfile"
                     }
                 }
             }
-            agent { docker { image "python:${PYTHON_VERSION}" } }
+            // Run this stage inside a Python container on an agent with label "agent-1".
+            // agent { docker { image "python:${PYTHON_VERSION}"  label "agent-1" } }
+            // agent { docker { image "python:${PYTHON_VERSION}" } }
+            agent {
+                docker {
+                    image "python:${PYTHON_VERSION}"
+                    label "agent-1"
+                }
+            }
+            environment {
+                HOME = "${WORKSPACE}"
+            }
             steps {
                 sh 'python --version'
-                sh 'pip install ruff'
-                sh 'ruff --version'
-                sh 'ruff check .'
+                sh 'pip install --user ruff'
+                sh 'export PATH=$HOME/.local/bin:$PATH && ruff --version'
+                sh 'export PATH=$HOME/.local/bin:$PATH && ruff check .'
             }
         }
 
@@ -54,12 +66,16 @@ pipeline {
             agent {
                 docker {
                     image 'aquasec/trivy:latest'
-                    args '--entrypoint=""'
+                    args '--entrypoint=""' // for run trivy without docker entrypoint in gitlab -> entrypoint : [""]
+                    label "agent-1"
                 }
             }
+            environment {
+                HOME = "${WORKSPACE}"
+            }
             steps {
-                sh 'trivy fs --format table .'
-                sh 'trivy config --format table Dockerfile'
+                sh 'trivy fs --cache-dir ${WORKSPACE}/.trivy-cache --format table .'
+                sh 'trivy config --cache-dir ${WORKSPACE}/.trivy-cache --format table Dockerfile'
             }
         }
 
@@ -72,7 +88,7 @@ pipeline {
                     allOf { branch 'dev'; changeset "Dockerfile" }
                 }
             }
-            agent any
+            agent { label "agent-1"}
             steps {
                 sh "docker build -t ${DOCKER_IMAGE} ."
                 sh "docker save ${DOCKER_IMAGE} -o image.tar"
@@ -89,31 +105,39 @@ pipeline {
                     allOf { branch 'dev'; changeset "Dockerfile" }
                 }
             }
-            agent any
+            agent {  label "agent-1" }
             steps {
                 unstash 'image-tar'
                 sh "docker load -i image.tar"
-                sh "trivy image ${DOCKER_IMAGE} --format table"
+                sh '''
+                    mkdir -p ${WORKSPACE}/.trivy-cache
+                    docker run --rm \
+                      -v /var/run/docker.sock:/var/run/docker.sock \
+                      -v ${WORKSPACE}/.trivy-cache:/tmp/.cache \
+                      -e HOME=/tmp \
+                      -e XDG_CACHE_HOME=/tmp/.cache \
+                      aquasec/trivy:latest image ${DOCKER_IMAGE} --format table
+                '''
             }
         }
 
         // ---------- Push to ECR: only on real push to dev (PR merged into dev) ----------
 
         stage('Push to ECR') {
-            when {
-                allOf {
+            when {// This stage runs only after a real push to dev // (either a direct push or a merged PR).
+                allOf { // 1 and 2 and 3 are true to run this job
                     branch 'dev'
-                    not { changeRequest() }
-                    anyOf { changeset "app/**"; changeset "Dockerfile" }
+                    not { changeRequest() } // not PR OPEN  was directly push on dev or PR closed+merged ~ -> real push on dev
+                    anyOf { changeset "app/**"; changeset "Dockerfile" } // change in app/** or Dockerfile
                 }
             }
-            agent any
+            agent { label "agent-1" }
             steps {
                 unstash 'image-tar'
                 sh "docker load -i image.tar"
                 withCredentials([
-                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
-                    string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY')
+                    string(credentialsId: 'AWS_ACCESS_KEY_ID', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'AWS_SECRET_ACCESS_KEY', variable: 'AWS_SECRET_ACCESS_KEY')
                 ]) {
                     sh '''
                         aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin $ECR_REGISTRY
@@ -134,17 +158,20 @@ pipeline {
                     anyOf { changeset "app/**"; changeset "Dockerfile" }
                 }
             }
-            agent any
+            agent { label "agent-1" }
             steps {
-                withCredentials([sshUserPrivateKey(credentialsId: 'deploy-ssh-key', keyFileVariable: 'SSH_KEY', usernameVariable: 'DEPLOY_USER')]) {
+                withCredentials([
+                    sshUserPrivateKey(credentialsId: 'DEPLOY_SSH_KEY', keyFileVariable: 'SSH_KEY', usernameVariable: 'DEPLOY_USER'),
+                    string(credentialsId: 'DEPLOY_DEV_HOST', variable: 'DEPLOY_DEV_HOST')
+                    ]) {
                     sh '''
                         mkdir -p ~/.ssh
                         ssh-keyscan -H $DEPLOY_DEV_HOST >> ~/.ssh/known_hosts
-                        ssh -i $SSH_KEY $DEPLOY_USER@$DEPLOY_DEV_HOST "aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin $ECR_REGISTRY"
-                        ssh -i $SSH_KEY $DEPLOY_USER@$DEPLOY_DEV_HOST "docker pull $ECR_REGISTRY/$DOCKER_IMAGE:latest"
-                        ssh -i $SSH_KEY $DEPLOY_USER@$DEPLOY_DEV_HOST "docker rm -f $CONTAINER_NAME || true"
-                        ssh -i $SSH_KEY $DEPLOY_USER@$DEPLOY_DEV_HOST "docker run -d --name $CONTAINER_NAME -p $APP_PORT:8000 $ECR_REGISTRY/$DOCKER_IMAGE:latest"
-                        ssh -i $SSH_KEY $DEPLOY_USER@$DEPLOY_DEV_HOST "curl -f http://localhost:$APP_PORT/health"
+                        ssh -i $SSH_KEY -o StrictHostKeyChecking=accept-new $DEPLOY_USER@$DEPLOY_DEV_HOST "aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin $ECR_REGISTRY"
+                        ssh -i $SSH_KEY -o StrictHostKeyChecking=accept-new $DEPLOY_USER@$DEPLOY_DEV_HOST "docker pull $ECR_REGISTRY/$DOCKER_IMAGE:latest"
+                        ssh -i $SSH_KEY -o StrictHostKeyChecking=accept-new $DEPLOY_USER@$DEPLOY_DEV_HOST "docker rm -f $CONTAINER_NAME || true"
+                        ssh -i $SSH_KEY -o StrictHostKeyChecking=accept-new $DEPLOY_USER@$DEPLOY_DEV_HOST "docker run -d --name $CONTAINER_NAME -p $APP_PORT:8000 $ECR_REGISTRY/$DOCKER_IMAGE:latest"
+                        ssh -i \$SSH_KEY -o StrictHostKeyChecking=accept-new \$DEPLOY_USER@\$DEPLOY_DEV_HOST 'for i in \$(seq 1 10); do curl -sf http://localhost:\$APP_PORT/health && break || sleep 2; done'
                     '''
                 }
             }
@@ -154,14 +181,17 @@ pipeline {
 
         stage('Deploy to Prod') {
             when {
-                allOf {
-                    branch 'main'
-                    not { changeRequest() }
+                allOf {// 1 and 2 are true
+                    branch 'main' // push to main or equivelent like PR closed+ merged into main
+                    not { changeRequest() } // not PR OPEN
                 }
             }
-            agent any
+            agent { label "agent-1" }
             steps {
-                withCredentials([sshUserPrivateKey(credentialsId: 'deploy-ssh-key', keyFileVariable: 'SSH_KEY', usernameVariable: 'DEPLOY_USER')]) {
+                withCredentials([
+                    sshUserPrivateKey(credentialsId: 'DEPLOY-SSH-KEY', keyFileVariable: 'SSH_KEY', usernameVariable: 'DEPLOY_USER'),
+                    string(credentialsId: 'DEPLOY_PROD_HOST', variable: 'DEPLOY_PROD_HOST')
+                ]) {
                     sh '''
                         mkdir -p ~/.ssh
                         ssh-keyscan -H $DEPLOY_PROD_HOST >> ~/.ssh/known_hosts
