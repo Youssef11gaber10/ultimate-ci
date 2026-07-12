@@ -34,7 +34,9 @@ pipeline {
                 }
             }
             // Run this stage inside a Python container on an agent with label "agent-1".
-            agent { docker { image "python:${PYTHON_VERSION}"  label "agent-1" } }
+            // agent { docker { image "python:${PYTHON_VERSION}"  label "agent-1" } }
+            agent { docker { image "python:${PYTHON_VERSION}" } }
+
             steps {
                 sh 'python --version'
                 sh 'pip install ruff'
