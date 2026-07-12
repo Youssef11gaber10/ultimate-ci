@@ -70,9 +70,12 @@ pipeline {
                     label "agent-1"
                 }
             }
+            environment {
+                HOME = "${WORKSPACE}"
+            }
             steps {
-                sh 'trivy fs --format table .'
-                sh 'trivy config --format table Dockerfile'
+                sh 'trivy fs --cache-dir ${WORKSPACE}/.trivy-cache --format table .'
+                sh 'trivy config --cache-dir ${WORKSPACE}/.trivy-cache --format table Dockerfile'
             }
         }
 
