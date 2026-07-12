@@ -12,7 +12,7 @@ variables:
   DOCKER_IMAGE: "task-img-gitlab-ci"
   ECR_REGISTRY: "767196576807.dkr.ecr.eu-north-1.amazonaws.com"
   CONTAINER_NAME: "github-lab-ci-container"
-  APP_PORT: "8000"
+  APP_PORT: "8001"
 
 # Prevent duplicate pipelines (branch pipeline + MR pipeline firing on the same push)
 # this like first filter this pipeline work when 
@@ -177,5 +177,5 @@ deploy-to-prod:
     - ssh -i ~/.ssh/ec2-private-key $DEPLOY_USER@$DEPLOY_PROD_HOST "aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin $ECR_REGISTRY"
     - ssh -i ~/.ssh/ec2-private-key $DEPLOY_USER@$DEPLOY_PROD_HOST "docker pull $ECR_REGISTRY/$DOCKER_IMAGE:latest"
     - ssh -i ~/.ssh/ec2-private-key $DEPLOY_USER@$DEPLOY_PROD_HOST "docker rm -f $CONTAINER_NAME || true"
-    - ssh -i ~/.ssh/ec2-private-key $DEPLOY_USER@$DEPLOY_PROD_HOST "docker run -d --name $CONTAINER_NAME -p $APP_PORT:$APP_PORT $ECR_REGISTRY/$DOCKER_IMAGE:latest"
+    - ssh -i ~/.ssh/ec2-private-key $DEPLOY_USER@$DEPLOY_PROD_HOST "docker run -d --name $CONTAINER_NAME -p $APP_PORT:8000 $ECR_REGISTRY/$DOCKER_IMAGE:latest"
     - ssh -i ~/.ssh/ec2-private-key $DEPLOY_USER@$DEPLOY_PROD_HOST "curl -f http://localhost:$APP_PORT/health"
