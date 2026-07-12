@@ -161,7 +161,7 @@ pipeline {
             agent { label "agent-1" }
             steps {
                 withCredentials([
-                    sshUserPrivateKey(credentialsId: 'DEPLOY-SSH-KEY', keyFileVariable: 'SSH_KEY', usernameVariable: 'DEPLOY_USER'),
+                    sshUserPrivateKey(credentialsId: 'DEPLOY_SSH_KEY', keyFileVariable: 'SSH_KEY', usernameVariable: 'DEPLOY_USER'),
                     string(credentialsId: 'DEPLOY_DEV_HOST', variable: 'DEPLOY_DEV_HOST')
                     ]) {
                     sh '''
