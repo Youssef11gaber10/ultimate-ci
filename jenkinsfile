@@ -65,6 +65,7 @@ pipeline {
                 docker {
                     image 'aquasec/trivy:latest'
                     args '--entrypoint=""' // for run trivy without docker entrypoint in gitlab -> entrypoint : [""]
+                    label "agent-1"
                 }
             }
             steps {
@@ -82,7 +83,7 @@ pipeline {
                     allOf { branch 'dev'; changeset "Dockerfile" }
                 }
             }
-            agent any
+            agent { label "agent-1"}
             steps {
                 sh "docker build -t ${DOCKER_IMAGE} ."
                 sh "docker save ${DOCKER_IMAGE} -o image.tar"
@@ -99,7 +100,7 @@ pipeline {
                     allOf { branch 'dev'; changeset "Dockerfile" }
                 }
             }
-            agent any
+            agent {  label "agent-1" }
             steps {
                 unstash 'image-tar'
                 sh "docker load -i image.tar"
@@ -117,7 +118,7 @@ pipeline {
                     anyOf { changeset "app/**"; changeset "Dockerfile" } // change in app/** or Dockerfile
                 }
             }
-            agent any
+            agent { label "agent-1" }
             steps {
                 unstash 'image-tar'
                 sh "docker load -i image.tar"
@@ -144,7 +145,7 @@ pipeline {
                     anyOf { changeset "app/**"; changeset "Dockerfile" }
                 }
             }
-            agent any
+            agent { label "agent-1" }
             steps {
                 withCredentials([
                     sshUserPrivateKey(credentialsId: 'DEPLOY-SSH-KEY', keyFileVariable: 'SSH_KEY', usernameVariable: 'DEPLOY_USER'),
@@ -172,7 +173,7 @@ pipeline {
                     not { changeRequest() } // not PR OPEN
                 }
             }
-            agent any
+            agent { label "agent-1" }
             steps {
                 withCredentials([
                     sshUserPrivateKey(credentialsId: 'DEPLOY-SSH-KEY', keyFileVariable: 'SSH_KEY', usernameVariable: 'DEPLOY_USER'),
