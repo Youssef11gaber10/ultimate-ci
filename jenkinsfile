@@ -1,5 +1,5 @@
 pipeline {
-    agent none
+    agent none // not assign the pipeline to one agent it will run each stage  on any available agent 
 
     environment {
         PYTHON_VERSION = "3.12"
@@ -10,8 +10,8 @@ pipeline {
     }
 
     options {
-        skipDefaultCheckout(false)
-        disableConcurrentBuilds()
+        skipDefaultCheckout(false) // make checkout before each stage
+        disableConcurrentBuilds() // make sure only one pipeline run at a time
     }
 
     stages {
@@ -20,20 +20,21 @@ pipeline {
 
         stage('Lint') {
             when {
-                anyOf {
-                    changeRequest target: 'dev'
-                    changeRequest target: 'main'
-                    allOf {
+                anyOf { // this like or  A or b or c any of then is true will run this job
+                    changeRequest target: 'dev'  // this like PR open/reopened/synchronize on dev
+                    changeRequest target: 'main' // this like PR open on main
+                    allOf {  // all of like and this true & this true 
                         branch 'dev'
                         changeset "app/**"
                     }
-                    allOf {
+                    allOf {// change in app/** or docker file from dev is directly push or merged from feature to dev
                         branch 'dev'
                         changeset "Dockerfile"
                     }
                 }
             }
-            agent { docker { image "python:${PYTHON_VERSION}" } }
+            // Run this stage inside a Python container on an agent with label "agent-1".
+            agent { docker { image "python:${PYTHON_VERSION}"  label "agent-1" } }
             steps {
                 sh 'python --version'
                 sh 'pip install ruff'
@@ -54,7 +55,7 @@ pipeline {
             agent {
                 docker {
                     image 'aquasec/trivy:latest'
-                    args '--entrypoint=""'
+                    args '--entrypoint=""' // for run trivy without docker entrypoint in gitlab -> entrypoint : [""]
                 }
             }
             steps {
@@ -100,11 +101,11 @@ pipeline {
         // ---------- Push to ECR: only on real push to dev (PR merged into dev) ----------
 
         stage('Push to ECR') {
-            when {
-                allOf {
+            when {// This stage runs only after a real push to dev // (either a direct push or a merged PR).
+                allOf { // 1 and 2 and 3 are true to run this job
                     branch 'dev'
-                    not { changeRequest() }
-                    anyOf { changeset "app/**"; changeset "Dockerfile" }
+                    not { changeRequest() } // not PR OPEN  was directly push on dev or PR closed+merged ~ -> real push on dev
+                    anyOf { changeset "app/**"; changeset "Dockerfile" } // change in app/** or Dockerfile
                 }
             }
             agent any
@@ -112,8 +113,8 @@ pipeline {
                 unstash 'image-tar'
                 sh "docker load -i image.tar"
                 withCredentials([
-                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
-                    string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY')
+                    string(credentialsId: 'AWS_ACCESS_KEY_ID', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'AWS_SECRET_ACCESS_KEY', variable: 'AWS_SECRET_ACCESS_KEY')
                 ]) {
                     sh '''
                         aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin $ECR_REGISTRY
@@ -136,7 +137,10 @@ pipeline {
             }
             agent any
             steps {
-                withCredentials([sshUserPrivateKey(credentialsId: 'deploy-ssh-key', keyFileVariable: 'SSH_KEY', usernameVariable: 'DEPLOY_USER')]) {
+                withCredentials([
+                    sshUserPrivateKey(credentialsId: 'DEPLOY-SSH-KEY', keyFileVariable: 'SSH_KEY', usernameVariable: 'DEPLOY_USER'),
+                    string(credentialsId: 'DEPLOY_DEV_HOST', variable: 'DEPLOY_DEV_HOST')
+                    ]) {
                     sh '''
                         mkdir -p ~/.ssh
                         ssh-keyscan -H $DEPLOY_DEV_HOST >> ~/.ssh/known_hosts
@@ -154,14 +158,17 @@ pipeline {
 
         stage('Deploy to Prod') {
             when {
-                allOf {
-                    branch 'main'
-                    not { changeRequest() }
+                allOf {// 1 and 2 are true
+                    branch 'main' // push to main or equivelent like PR closed+ merged into main
+                    not { changeRequest() } // not PR OPEN
                 }
             }
             agent any
             steps {
-                withCredentials([sshUserPrivateKey(credentialsId: 'deploy-ssh-key', keyFileVariable: 'SSH_KEY', usernameVariable: 'DEPLOY_USER')]) {
+                withCredentials([
+                    sshUserPrivateKey(credentialsId: 'DEPLOY-SSH-KEY', keyFileVariable: 'SSH_KEY', usernameVariable: 'DEPLOY_USER'),
+                    string(credentialsId: 'DEPLOY_PROD_HOST', variable: 'DEPLOY_PROD_HOST')
+                ]) {
                     sh '''
                         mkdir -p ~/.ssh
                         ssh-keyscan -H $DEPLOY_PROD_HOST >> ~/.ssh/known_hosts
